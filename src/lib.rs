@@ -1,106 +1,125 @@
-//!
-//! Stylus Hello World
-//!
-//! The following contract implements the Counter example from Foundry.
-//!
-//! ```solidity
-//! contract Counter {
-//!     uint256 public number;
-//!     function setNumber(uint256 newNumber) public {
-//!         number = newNumber;
-//!     }
-//!     function increment() public {
-//!         number++;
-//!     }
-//! }
-//! ```
-//!
-//! The program is ABI-equivalent with Solidity, which means you can call it from both Solidity and Rust.
-//! To do this, run `cargo stylus export-abi`.
-//!
-//! Note: this code is a template-only and has not been audited.
-//!
-// Allow `cargo stylus export-abi` to generate a main function.
-#![cfg_attr(not(any(test, feature = "export-abi")), no_main)]
-extern crate alloc;
+use serde::{Deserialize, Serialize};
+use reqwest::Client;
+use std::error::Error;
+use std::collections::HashMap;
 
-/// Import items from the SDK. The prelude contains common traits and macros.
-use stylus_sdk::{alloy_primitives::U256, prelude::*};
-
-// Define some persistent storage using the Solidity ABI.
-// `Counter` will be the entrypoint.
-sol_storage! {
-    #[entrypoint]
-    pub struct Counter {
-        uint256 number;
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TokenData {
+    price: f64,
+    market_cap: f64,
+    volume_24h: f64,
+    price_change_24h: f64,
+    price_change_7d: Option<f64>,
+    category: String,
 }
 
-/// Declare that `Counter` is a contract with the following external methods.
-#[public]
-impl Counter {
-    /// Gets the number from storage.
-    pub fn number(&self) -> U256 {
-        self.number.get()
-    }
-
-    /// Sets a number in storage to a user-specified value.
-    pub fn set_number(&mut self, new_number: U256) {
-        self.number.set(new_number);
-    }
-
-    /// Sets a number in storage to a user-specified value.
-    pub fn mul_number(&mut self, new_number: U256) {
-        self.number.set(new_number * self.number.get());
-    }
-
-    /// Sets a number in storage to a user-specified value.
-    pub fn add_number(&mut self, new_number: U256) {
-        self.number.set(new_number + self.number.get());
-    }
-
-    /// Increments `number` and updates its value in storage.
-    pub fn increment(&mut self) {
-        let number = self.number.get();
-        self.set_number(number + U256::from(1));
-    }
-
-    /// Adds the wei value from msg_value to the number in storage.
-    #[payable]
-    pub fn add_from_msg_value(&mut self) {
-        let number = self.number.get();
-        self.set_number(number + self.vm().msg_value());
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CategoryAnalysis {
+    pub category: String,
+    pub average_return_24h: f64,
+    pub total_market_cap: f64,
+    pub total_volume: f64,
+    pub top_performers: Vec<String>,
+    pub sentiment_score: f64,
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_counter() {
-        use stylus_sdk::testing::*;
-        let vm = TestVM::default();
-        let mut contract = Counter::from(&vm);
-
-        assert_eq!(U256::ZERO, contract.number());
-
-        contract.increment();
-        assert_eq!(U256::from(1), contract.number());
-
-        contract.add_number(U256::from(3));
-        assert_eq!(U256::from(4), contract.number());
-
-        contract.mul_number(U256::from(2));
-        assert_eq!(U256::from(8), contract.number());
-
-        contract.set_number(U256::from(100));
-        assert_eq!(U256::from(100), contract.number());
-
-        // Override the msg value for future contract method invocations.
-        vm.set_value(U256::from(2));
-
-        contract.add_from_msg_value();
-        assert_eq!(U256::from(102), contract.number());
-    }
+#[derive(Debug)]
+pub struct InvestmentStrategy {
+    pub recommendation: String,
+    pub confidence: f64,
+    pub reasoning: String,
+    pub risk_level: String,
+    pub time_horizon: String,
 }
+
+pub struct MarketAnalyzer {
+    client: Client,
+    categories: HashMap<String, Vec<String>>,
+}
+
+impl MarketAnalyzer {
+    pub fn new() -> Self {
+        let mut categories = HashMap::new();
+        categories.insert("ai".to_string(), vec![
+            "fetch-ai".to_string(),
+            "singularitynet".to_string(),
+            "ocean-protocol".to_string(),
+        ]);
+        categories.insert("defi".to_string(), vec![
+            "aave".to_string(),
+            "uniswap".to_string(),
+            "compound".to_string(),
+        ]);
+        categories.insert("l2".to_string(), vec![
+            "arbitrum".to_string(),
+            "optimism".to_string(),
+            "polygon".to_string(),
+        ]);
+
+        Self {
+            client: Client::new(),
+            categories,
+        }
+    }
+
+    pub async fn analyze_category(&self, category: &str) -> Result<CategoryAnalysis, Box<dyn Error>> {
+        let tokens = self.categories.get(category)
+            .ok_or("Category not found")?;
+
+        let mut total_return = 0.0;
+        let mut total_market_cap = 0.0;
+        let mut total_volume = 0.0;
+        let mut top_performers = Vec::new();
+
+        for token in tokens {
+            if let Ok(data) = self.fetch_token_data(token).await {
+                total_return += data.price_change_24h;
+                total_market_cap += data.market_cap;
+                total_volume += data.volume_24h;
+                
+                if data.price_change_24h > 5.0 {
+                    top_performers.push(token.clone());
+                }
+            }
+        }
+
+        Ok(CategoryAnalysis {
+            category: category.to_string(),
+            average_return_24h: total_return / tokens.len() as f64,
+            total_market_cap,
+            total_volume,
+            top_performers,
+            sentiment_score: self.calculate_sentiment(category).await?,
+        })
+    }
+
+    async fn fetch_token_data(&self, token_id: &str) -> Result<TokenData, Box<dyn Error>> {
+        let url = format!(
+            "https://api.coingecko.com/api/v3/simple/price?ids={}&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true&include_market_cap=true",
+            token_id
+        );
+
+        let data = self.client
+            .get(&url)
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+
+        // Parse response into TokenData
+        // Add proper error handling here
+        Ok(TokenData {
+            price: 0.0, // Parse from response
+            market_cap: 0.0,
+            volume_24h: 0.0,
+            price_change_24h: 0.0,
+            price_change_7d: None,
+            category: "".to_string(),
+        })
+    }
+
+    async fn calculate_sentiment(&self, category: &str) -> Result<f64, Box<dyn Error>> {
+        // Implement sentiment analysis logic
+        Ok(0.7) // Placeholder
+    }
+} 
