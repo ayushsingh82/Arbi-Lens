@@ -1,6 +1,6 @@
 
 
-# Crypto Market Analysis AI Agent
+# ArbiLens
 
 An intelligent Rust-based analysis system that provides investment insights across different cryptocurrency categories (AI, DeFi, L2) using data from CoinGecko and DeFiLlama APIs.
 
